@@ -540,8 +540,8 @@ class GalileoDecorator:
         logged_args = func_args[1:] if is_method else func_args
         raw_input = {"args": logged_args, "kwargs": func_kwargs}
 
-        # Serialize and deserialize to ensure proper JSON serialization.
-        return json.loads(json.dumps(raw_input, cls=EventSerializer))
+        # Optimize: Try native-fast JSON, only use EventSerializer if needed.
+        return self._fast_native_roundtrip(raw_input)
 
     def _finalize_call(
         self, span_type: Optional[SPAN_TYPE], span_params: dict[str, str], result: Any
@@ -856,6 +856,20 @@ class GalileoDecorator:
         _experiment_id_context.set(experiment_id)
         _span_stack_context.set([])
         _trace_context.set(None)
+
+    def _fast_native_roundtrip(self, obj: Any) -> Any:
+        """
+        Quickly round-trip through JSON using the built-in encoder for simple types.
+        Falls back to the full EventSerializer path if serialization fails.
+        """
+        try:
+            # Try the fastest possible encode/decode for common primitives
+            s = json.dumps(obj)
+            return json.loads(s)
+        except (TypeError, OverflowError):
+            # Fallback in case of custom objects or non-native types
+            s = json.dumps(obj, cls=EventSerializer)
+            return json.loads(s)
 
 
 galileo_context = GalileoDecorator()
