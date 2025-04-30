@@ -289,22 +289,22 @@ class Datasets(BaseClientModel):
         """
 
         file_path, dataset_format = parse_dataset(content)
-        file = File(
-            payload=file_path.open("rb"),
-            file_name=name,
-            mime_type=mimetypes.guess_type(file_path)[0] or "application/octet-stream",
-        )
+        mime_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
 
-        body = BodyUploadDatasetDatasetsPost(file=file)
+        # Use context manager to open file and ensure closure
+        with file_path.open("rb") as payload:
+            file = File(payload=payload, file_name=name, mime_type=mime_type)
+            body = BodyUploadDatasetDatasetsPost(file=file)
+            detailed_response = upload_dataset_datasets_post.sync_detailed(
+                client=self.client, body=body, format_=dataset_format
+            )
 
-        detailed_response = upload_dataset_datasets_post.sync_detailed(
-            client=self.client, body=body, format_=dataset_format
-        )
+            parsed = detailed_response.parsed
+            if parsed is None or isinstance(parsed, HTTPValidationError):
+                raise DatasetAPIException(detailed_response.content)
 
-        if not detailed_response.parsed or isinstance(detailed_response.parsed, HTTPValidationError):
-            raise DatasetAPIException(detailed_response.content)
-
-        return Dataset(dataset_db=detailed_response.parsed, client=self.client)
+            # Return immediately after success, no need to keep file handle open
+            return Dataset(dataset_db=parsed, client=self.client)
 
 
 #
