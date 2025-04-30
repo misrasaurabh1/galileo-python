@@ -137,21 +137,45 @@ class GalileoDecorator:
         Returns:
             GalileoDecorator: The decorator instance for use in a with statement
         """
-        self._previous_project_context = _project_context.get()
-        self._previous_log_stream_context = _log_stream_context.get()
-        self._previous_experiment_id_context = _experiment_id_context.get()
-        self._previous_trace_context = _trace_context.get()
-        self._previous_span_stack_context = _span_stack_context.get()
+        # Cache to locals (faster than attribute access)
+        project = self._project
+        log_stream = self._log_stream
+        experiment_id = self._experiment_id
 
-        _span_stack_context.set([])
-        _trace_context.set(None)
+        # Cache contextvar references
+        project_ctx = _project_context
+        log_stream_ctx = _log_stream_context
+        experiment_id_ctx = _experiment_id_context
+        trace_ctx = _trace_context
+        span_stack_ctx = _span_stack_context
 
-        if self._project is not None:
-            _project_context.set(self._project)
-        if self._log_stream is not None:
-            _log_stream_context.set(self._log_stream)
-        if self._experiment_id is not None:
-            _experiment_id_context.set(self._experiment_id)
+        # Capture current state
+        prev_project = project_ctx.get()
+        prev_log_stream = log_stream_ctx.get()
+        prev_experiment_id = experiment_id_ctx.get()
+        prev_trace = trace_ctx.get()
+        prev_span_stack = span_stack_ctx.get()
+
+        self._previous_project_context = prev_project
+        self._previous_log_stream_context = prev_log_stream
+        self._previous_experiment_id_context = prev_experiment_id
+        self._previous_trace_context = prev_trace
+        self._previous_span_stack_context = prev_span_stack
+
+        # Wipe trace/span stack for new context
+        # Only set if not already empty for small perf gain
+        if prev_span_stack:
+            span_stack_ctx.set([])
+        if prev_trace is not None:
+            trace_ctx.set(None)
+
+        # Only set new contexts if needed
+        if project is not None and prev_project != project:
+            project_ctx.set(project)
+        if log_stream is not None and prev_log_stream != log_stream:
+            log_stream_ctx.set(log_stream)
+        if experiment_id is not None and prev_experiment_id != experiment_id:
+            experiment_id_ctx.set(experiment_id)
 
         return self  # Allows `as galileo` usage
 
