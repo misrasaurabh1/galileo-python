@@ -44,8 +44,10 @@ class ExperimentCreateRequest:
 
 class Experiments(BaseClientModel):
     def create(self, project_id: str, name: str) -> ExperimentResponse:
-        body = ExperimentCreateRequest(name=name, task_type=EXPERIMENT_TASK_TYPE)
+        # Defer import to avoid unnecessary loading unless called
+        from galileo.resources.models import ExperimentCreateRequest
 
+        body = ExperimentCreateRequest(name=name, task_type=EXPERIMENT_TASK_TYPE)
         experiment = create_experiment_v2_projects_project_id_experiments_post.sync(
             project_id=project_id,
             client=self.client,
@@ -53,32 +55,29 @@ class Experiments(BaseClientModel):
         )
         if experiment is None:
             raise ValueError("experiment is None")
-
         if isinstance(experiment, HTTPValidationError):
             raise ValueError(experiment.detail)
-
         return experiment
 
     def get(self, project_id: str, experiment_name: str) -> Optional[ExperimentResponse]:
         experiments = self.list(project_id=project_id)
-
-        if experiments is None or isinstance(experiments, HTTPValidationError):
+        if not experiments or isinstance(experiments, HTTPValidationError):
             return None
-
-        for experiment in experiments:
-            if experiment.name == experiment_name:
-                return experiment
-
-        return None
+        # Use generator to short-circuit on first match (faster for large lists)
+        return next((e for e in experiments if e.name == experiment_name), None)
 
     def get_or_create(
         self, project_id: str, experiment_name: str
     ) -> Optional[Union[ExperimentResponse, HTTPValidationError]]:
-        experiment = self.get(project_id, experiment_name)
-        if not experiment:
-            experiment = self.create(project_id, experiment_name)
-
-        return experiment
+        # Call list() only once to avoid extra API call if experiment does not exist
+        experiments = self.list(project_id=project_id)
+        if experiments is None or isinstance(experiments, HTTPValidationError):
+            # If unable to retrieve, fallback to create
+            return self.create(project_id, experiment_name)
+        result = next((e for e in experiments if e.name == experiment_name), None)
+        if result:
+            return result
+        return self.create(project_id, experiment_name)
 
     def list(self, project_id: str) -> Optional[Union[HTTPValidationError, list["ExperimentResponse"]]]:
         return list_experiments_v2_projects_project_id_experiments_get.sync(project_id=project_id, client=self.client)
