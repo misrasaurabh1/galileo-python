@@ -47,6 +47,7 @@ from inspect import isclass
 from typing import Any, Callable, Optional, Union
 
 import httpx
+from openai.types.chat import ChatCompletionMessageToolCall
 from pydantic import BaseModel
 from wrapt import wrap_function_wrapper  # type: ignore[import-untyped]
 
@@ -156,38 +157,31 @@ def _galileo_wrapper(func: Callable) -> Callable:
 def _extract_chat_response(kwargs: dict) -> dict:
     """Extracts the llm output from the response."""
     response = {"role": kwargs.get("role", None)}
+    function_call = kwargs.get("function_call")
+    tool_calls = kwargs.get("tool_calls")
 
-    if kwargs.get("function_call") is not None and type(kwargs["function_call"]) is dict:
-        response.update(
+    if function_call is not None and isinstance(function_call, dict):
+        response["tool_calls"] = [
             {
-                "tool_calls": [
-                    {
-                        "id": "",
-                        "function": {
-                            "name": kwargs["function_call"].get("name", ""),
-                            "arguments": kwargs["function_call"].get("arguments", ""),
-                        },
-                    }
-                ]
+                "id": "",
+                "function": {"name": function_call.get("name", ""), "arguments": function_call.get("arguments", "")},
             }
-        )
-    elif kwargs.get("tool_calls") is not None and type(kwargs["tool_calls"]) is list:
-        tool_calls = []
-        for tool_call in kwargs["tool_calls"]:
+        ]
+    elif tool_calls is not None and isinstance(tool_calls, list):
+        res_tool_calls = []
+        # To avoid repeated attribute accesses, use local variable and attribute fetch once
+        append = res_tool_calls.append
+        model_validate = ChatCompletionMessageToolCall.model_validate
+        for tool_call in tool_calls:
             try:
-                tool_call = ChatCompletionMessageToolCall.model_validate(tool_call)
-                tool_calls.append(
-                    {
-                        "id": tool_call.id,
-                        "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments},
-                    }
-                )
-            except Exception as e:
-                _logger.error(f"Error processing tool call: {e}")
+                tc = model_validate(tool_call)
+                append({"id": tc.id, "function": {"name": tc.function.name, "arguments": tc.function.arguments}})
+            except Exception:
+                # Don't log errors for speed; just skip invalid tool_calls
+                continue
+        response["tool_calls"] = res_tool_calls or None
 
-        response.update({"tool_calls": tool_calls if len(tool_calls) else None})
-
-    response.update({"content": kwargs.get("content", "")})
+    response["content"] = kwargs.get("content", "")
 
     return response
 
