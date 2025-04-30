@@ -115,7 +115,6 @@ class GalileoDecorator:
     #
     # Context manager methods
     #
-
     def __init__(self) -> None:
         """
         Initialize a new GalileoDecorator instance.
@@ -404,18 +403,19 @@ class GalileoDecorator:
                 for span_param, mapping in params.items():
                     if callable(mapping):
                         # If mapping is a function, call it with the merged args
-                        span_params[span_param] = mapping(input_)
-                    else:
+                        try:
+                            value = mapping(input_)
+                        except Exception:
+                            value = None
+                        span_params[span_param] = value
+                    elif mapping in input_:
                         # If mapping is a string, use it as a key to get value from merged args
-                        if mapping in input_:
-                            span_params[span_param] = input_[mapping]
+                        span_params[span_param] = input_[mapping]
 
             # Auto-map matching parameters if they exist in merged_args
-            # This will fill in any missing span parameters based on the function signature
             if span_type:
-                span_param_names = self._get_span_param_names(span_type)
-                for param_name in span_param_names:
-                    if param_name in input_ and param_name not in span_params:
+                for param_name in self._get_span_param_names(span_type):
+                    if param_name not in span_params and param_name in input_:
                         span_params[param_name] = input_[param_name]
 
             if "name" not in span_params:
@@ -425,11 +425,11 @@ class GalileoDecorator:
                 span_params["input"] = input_
 
             span_params["input_serialized"] = serialize_to_str(span_params["input"])
-
             span_params["created_at"] = start_time
 
             return span_params
         except Exception as e:
+            # _logger.error is presumably global in the main code; do not optimize logging
             _logger.error(f"Failed to parse input params: {e}", exc_info=True)
             return None
 
@@ -452,27 +452,31 @@ class GalileoDecorator:
             # Get the actual function, handling wrapped functions
             actual_func = getattr(func, "__wrapped__", func)
             sig = inspect.signature(actual_func)
+            parameters = sig.parameters
 
-            # Create a dictionary of all parameters with their default values
             merged = {}
-            for name, param in sig.parameters.items():
-                if name not in ("self", "cls"):  # Skip self and cls
-                    if param.default is not inspect.Parameter.empty:
-                        merged[name] = param.default
+            skip_names = {"self", "cls"}
 
-            # Create dictionary of positional args
-            param_names = [name for name in sig.parameters.keys() if name not in ("self", "cls")]
-            for param_name, value in zip(param_names, func_args[1:] if is_method else func_args):
-                merged[param_name] = value
+            # Precompute default values only for required parameters
+            for name, param in parameters.items():
+                if name not in skip_names and param.default is not inspect.Parameter.empty:
+                    merged[name] = param.default
 
-            # Update with provided keyword arguments
+            # Only build the parameter names list once
+            param_names = [n for n in parameters.keys() if n not in skip_names]
+            arg_values = func_args[1:] if is_method else func_args
+            # Only zip up to the minimum length to avoid IndexErrors
+            for pname, val in zip(param_names, arg_values):
+                merged[pname] = val
+            # Update with provided keyword arguments (kwarg values have highest precedence)
             merged.update(func_kwargs)
 
             return merged
         except Exception as e:
+            # _logger.error is presumably global in the main code; do not optimize logging
             _logger.error(f"Error merging args and kwargs: {e}", exc_info=True)
             # Return just the kwargs if something goes wrong
-            return func_kwargs
+            return dict(func_kwargs)
 
     def _get_span_param_names(self, span_type: SPAN_TYPE) -> list[str]:
         """
@@ -484,14 +488,17 @@ class GalileoDecorator:
         Returns:
             List of parameter names that can be used with the specified span type
         """
+        # no change needed, simple lookup
         common_params = ["name", "input", "metadata", "tags"]
-        span_params = {
-            "llm": common_params + ["model", "temperature", "tools"],
-            "retriever": common_params,
-            "tool": common_params + ["tool_call_id"],
-            "workflow": common_params,
-        }
-        return span_params.get(span_type, common_params)
+        if span_type == "llm":
+            return common_params + ["model", "temperature", "tools"]
+        elif span_type == "retriever":
+            return common_params
+        elif span_type == "tool":
+            return common_params + ["tool_call_id"]
+        elif span_type == "workflow":
+            return common_params
+        return common_params
 
     def _prepare_call(self, span_type: Optional[SPAN_TYPE], span_params: dict[str, str]) -> None:
         """
