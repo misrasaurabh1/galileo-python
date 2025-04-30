@@ -3,7 +3,6 @@ from typing import Any, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
-from dateutil.parser import isoparse
 
 from ..types import UNSET, Unset
 
@@ -59,31 +58,25 @@ class LogStreamResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: dict[str, Any]) -> T:
-        d = src_dict.copy()
-        created_at = isoparse(d.pop("created_at"))
+        # Avoid copying the dict, just access each field directly
+        d = src_dict
 
-        id = d.pop("id")
+        created_at = _fast_isoparse(d["created_at"])
+        id = d["id"]
+        name = d["name"]
+        project_id = d["project_id"]
+        updated_at = _fast_isoparse(d["updated_at"])
+        created_by = _parse_created_by(d.get("created_by", UNSET))
 
-        name = d.pop("name")
-
-        project_id = d.pop("project_id")
-
-        updated_at = isoparse(d.pop("updated_at"))
-
-        def _parse_created_by(data: object) -> Union[None, Unset, str]:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(Union[None, Unset, str], data)
-
-        created_by = _parse_created_by(d.pop("created_by", UNSET))
+        # Build using fields, and for extra fields use a dict comprehension
+        known_keys = {"created_at", "id", "name", "project_id", "updated_at", "created_by"}
+        # Extract the additional properties directly
+        extra = {k: v for k, v in d.items() if k not in known_keys}
 
         log_stream_response = cls(
             created_at=created_at, id=id, name=name, project_id=project_id, updated_at=updated_at, created_by=created_by
         )
-
-        log_stream_response.additional_properties = d
+        log_stream_response.additional_properties = extra  # type: ignore
         return log_stream_response
 
     @property
@@ -101,3 +94,20 @@ class LogStreamResponse:
 
     def __contains__(self, key: str) -> bool:
         return key in self.additional_properties
+
+
+# Fast ISO format parse falls back to dateutil only if strictly needed
+def _fast_isoparse(s: str) -> datetime.datetime:
+    try:
+        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        from dateutil.parser import isoparse
+
+        return isoparse(s)
+
+
+def _parse_created_by(data: object) -> Union[None, Unset, str]:
+    # Fast path, branch quickly
+    if data is None or isinstance(data, Unset) or isinstance(data, str):
+        return data
+    return cast(Union[None, Unset, str], data)

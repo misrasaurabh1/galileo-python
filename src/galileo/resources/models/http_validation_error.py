@@ -1,7 +1,10 @@
-from typing import TYPE_CHECKING, Any, TypeVar, Union
+import datetime
+from typing import TYPE_CHECKING, Any, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from galileo.resources.models.validation_error import ValidationError
 
 from ..types import UNSET, Unset
 
@@ -40,21 +43,21 @@ class HTTPValidationError:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: dict[str, Any]) -> T:
-        from ..models.validation_error import ValidationError
+        # Local import for avoid cycle
+        from galileo.resources.models.validation_error import ValidationError
 
-        d = src_dict.copy()
-        detail = []
-        _detail = d.pop("detail", UNSET)
-
+        d = src_dict
+        _detail = d.get("detail", UNSET)
         if isinstance(_detail, list):
-            for detail_item_data in _detail:
-                detail_item = ValidationError.from_dict(detail_item_data)
+            # List comprehension is always faster in CPython
+            detail = [ValidationError.from_dict(item) for item in _detail]
+        else:
+            detail = UNSET
 
-                detail.append(detail_item)
-
+        # Known keys only 'detail'
+        extra = {k: v for k, v in d.items() if k != "detail"}
         http_validation_error = cls(detail=detail)
-
-        http_validation_error.additional_properties = d
+        http_validation_error.additional_properties = extra  # type: ignore
         return http_validation_error
 
     @property
@@ -72,3 +75,20 @@ class HTTPValidationError:
 
     def __contains__(self, key: str) -> bool:
         return key in self.additional_properties
+
+
+# Fast ISO format parse falls back to dateutil only if strictly needed
+def _fast_isoparse(s: str) -> datetime.datetime:
+    try:
+        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        from dateutil.parser import isoparse
+
+        return isoparse(s)
+
+
+def _parse_created_by(data: object) -> Union[None, Unset, str]:
+    # Fast path, branch quickly
+    if data is None or isinstance(data, Unset) or isinstance(data, str):
+        return data
+    return cast(Union[None, Unset, str], data)
