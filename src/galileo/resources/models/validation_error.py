@@ -1,4 +1,4 @@
-from typing import Any, TypeVar, Union, cast
+from typing import Any, TypeVar, Union
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -40,23 +40,14 @@ class ValidationError:
     @classmethod
     def from_dict(cls: type[T], src_dict: dict[str, Any]) -> T:
         d = src_dict.copy()
-        loc = []
+        # Extract 'loc', 'msg', 'type' directly and in one step per field
         _loc = d.pop("loc")
-        for loc_item_data in _loc:
-
-            def _parse_loc_item(data: object) -> Union[int, str]:
-                return cast(Union[int, str], data)
-
-            loc_item = _parse_loc_item(loc_item_data)
-
-            loc.append(loc_item)
+        loc = list(_loc)  # Simply copy, no need for casting/parsing
 
         msg = d.pop("msg")
-
         type_ = d.pop("type")
 
         validation_error = cls(loc=loc, msg=msg, type_=type_)
-
         validation_error.additional_properties = d
         return validation_error
 
