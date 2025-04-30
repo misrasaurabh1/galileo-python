@@ -1,5 +1,6 @@
+import datetime
 from http import HTTPStatus
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 import httpx
 
@@ -7,7 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.http_validation_error import HTTPValidationError
 from ...models.log_stream_response import LogStreamResponse
-from ...types import Response
+from ...types import Response, Unset
 
 
 def _get_kwargs(project_id: str, log_stream_id: str) -> dict[str, Any]:
@@ -19,15 +20,15 @@ def _get_kwargs(project_id: str, log_stream_id: str) -> dict[str, Any]:
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
 ) -> Optional[Union[HTTPValidationError, LogStreamResponse]]:
-    if response.status_code == 200:
-        response_200 = LogStreamResponse.from_dict(response.json())
-
-        return response_200
-    if response.status_code == 422:
-        response_422 = HTTPValidationError.from_dict(response.json())
-
-        return response_422
-    if client.raise_on_unexpected_status:
+    # Fast path, avoid multiple response.json calls
+    sc = response.status_code
+    if sc == 200:
+        j = response.json()
+        return LogStreamResponse.from_dict(j)
+    elif sc == 422:
+        j = response.json()
+        return HTTPValidationError.from_dict(j)
+    elif client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
         return None
@@ -138,3 +139,20 @@ async def asyncio(
     """
 
     return (await asyncio_detailed(project_id=project_id, log_stream_id=log_stream_id, client=client)).parsed
+
+
+# Fast ISO format parse falls back to dateutil only if strictly needed
+def _fast_isoparse(s: str) -> datetime.datetime:
+    try:
+        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        from dateutil.parser import isoparse
+
+        return isoparse(s)
+
+
+def _parse_created_by(data: object) -> Union[None, Unset, str]:
+    # Fast path, branch quickly
+    if data is None or isinstance(data, Unset) or isinstance(data, str):
+        return data
+    return cast(Union[None, Unset, str], data)
