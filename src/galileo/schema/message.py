@@ -10,7 +10,8 @@ from galileo_core.schemas.logging.llm import ToolCall, ToolCallFunction
 
 class Message(CoreMessage):
     def to_dict(self) -> dict[str, Any]:
-        return self.model_dump(exclude_none=True)
+        md = self.model_dump
+        return md(exclude_none=True)
 
     def __eq__(self, value: CoreMessage) -> bool:
         return (
