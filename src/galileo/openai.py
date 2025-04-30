@@ -47,6 +47,10 @@ from inspect import isclass
 from typing import Any, Callable, Optional, Union
 
 import httpx
+import openai
+import openai.resources
+from openai.types.chat import ChatCompletionMessageToolCall
+from packaging.version import Version
 from pydantic import BaseModel
 from wrapt import wrap_function_wrapper  # type: ignore[import-untyped]
 
@@ -155,40 +159,37 @@ def _galileo_wrapper(func: Callable) -> Callable:
 
 def _extract_chat_response(kwargs: dict) -> dict:
     """Extracts the llm output from the response."""
-    response = {"role": kwargs.get("role", None)}
+    response = {"role": kwargs.get("role")}
 
-    if kwargs.get("function_call") is not None and type(kwargs["function_call"]) is dict:
-        response.update(
+    function_call = kwargs.get("function_call")
+    if function_call is not None and isinstance(function_call, dict):
+        response["tool_calls"] = [
             {
-                "tool_calls": [
-                    {
-                        "id": "",
-                        "function": {
-                            "name": kwargs["function_call"].get("name", ""),
-                            "arguments": kwargs["function_call"].get("arguments", ""),
-                        },
-                    }
-                ]
+                "id": "",
+                "function": {"name": function_call.get("name", ""), "arguments": function_call.get("arguments", "")},
             }
-        )
-    elif kwargs.get("tool_calls") is not None and type(kwargs["tool_calls"]) is list:
-        tool_calls = []
-        for tool_call in kwargs["tool_calls"]:
-            try:
-                tool_call = ChatCompletionMessageToolCall.model_validate(tool_call)
-                tool_calls.append(
-                    {
-                        "id": tool_call.id,
-                        "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments},
-                    }
-                )
-            except Exception as e:
-                _logger.error(f"Error processing tool call: {e}")
+        ]
+    else:
+        tool_calls = kwargs.get("tool_calls")
+        if tool_calls is not None and isinstance(tool_calls, list):
+            parsed_tool_calls = []
+            for tool_call in tool_calls:
+                try:
+                    tool_call_obj = ChatCompletionMessageToolCall.model_validate(tool_call)
+                    parsed_tool_calls.append(
+                        {
+                            "id": tool_call_obj.id,
+                            "function": {
+                                "name": tool_call_obj.function.name,
+                                "arguments": tool_call_obj.function.arguments,
+                            },
+                        }
+                    )
+                except Exception as e:
+                    _logger.error(f"Error processing tool call: {e}")
+            response["tool_calls"] = parsed_tool_calls if parsed_tool_calls else None
 
-        response.update({"tool_calls": tool_calls if len(tool_calls) else None})
-
-    response.update({"content": kwargs.get("content", "")})
-
+    response["content"] = kwargs.get("content", "")
     return response
 
 
@@ -283,53 +284,40 @@ def _parse_usage(usage: Optional[dict] = None) -> Optional[dict]:
     if usage is None:
         return None
 
-    usage_dict = usage.copy() if isinstance(usage, dict) else usage.__dict__
+    # Use vars() to get __dict__ for objects, otherwise use as is
+    usage_dict = usage.copy() if isinstance(usage, dict) else vars(usage)
 
-    for tokens_details in ["prompt_tokens_details", "completion_tokens_details"]:
-        if tokens_details in usage_dict and usage_dict[tokens_details] is not None:
-            tokens_details_dict = (
-                usage_dict[tokens_details]
-                if isinstance(usage_dict[tokens_details], dict)
-                else usage_dict[tokens_details].__dict__
-            )
-            usage_dict[tokens_details] = {k: v for k, v in tokens_details_dict.items() if v is not None}
-
+    for key in ("prompt_tokens_details", "completion_tokens_details"):
+        if key in usage_dict:
+            details = usage_dict[key]
+            if details is not None:
+                details_dict = details if isinstance(details, dict) else vars(details)
+                # Exclude None values
+                usage_dict[key] = {k: v for k, v in details_dict.items() if v is not None}
     return usage_dict
 
 
 def _extract_data_from_default_response(resource: OpenAiModuleDefinition, response: dict[str, Any]) -> Any:
-    if response is None:
+    if not response:
         return None, "<NoneType response returned from OpenAI>", None
 
-    model = response.get("model", None) or None
-
+    model = response.get("model")
     completion = None
+    choices = response.get("choices")
     if resource.type == "completion":
-        choices = response.get("choices", [])
-        if len(choices) > 0:
+        if choices:
             choice = choices[-1]
-
-            completion = choice.text if _is_openai_v1() else choice.get("text", None)
-    elif resource.type == "chat":
-        choices = response.get("choices", [])
-        if len(choices):
-            if len(choices) > 1:
-                completion = [
-                    (
-                        _extract_chat_response(choice.message.__dict__)
-                        if _is_openai_v1()
-                        else choice.get("message", None)
-                    )
-                    for choice in choices
-                ]
+            completion = choice.text if _is_openai_v1() else choice.get("text")
+    elif resource.type == "chat" and choices:
+        if len(choices) > 1:
+            if _is_openai_v1():
+                completion = [_extract_chat_response(choice.message.__dict__) for choice in choices]
             else:
-                choice = choices[0]
-                completion = (
-                    _extract_chat_response(choice.message.__dict__) if _is_openai_v1() else choice.get("message", None)
-                )
-
-    usage = _parse_usage(response.get("usage", None))
-
+                completion = [choice.get("message") for choice in choices]
+        else:
+            choice = choices[0]
+            completion = _extract_chat_response(choice.message.__dict__) if _is_openai_v1() else choice.get("message")
+    usage = _parse_usage(response.get("usage"))
     return model, completion, usage
 
 
