@@ -53,20 +53,22 @@ class PromptTemplate(BasePromptTemplateResponse):
 
 class PromptTemplates(BaseClientModel):
     def list(self, project_name: str) -> list[PromptTemplate]:
-        project = Projects().get(name=project_name)
+        # Retrieve project and immediately error if not found
+        project = Projects(self.client).get(name=project_name)
         if not project:
             raise ValueError(f"Project {project_name} does not exist")
 
+        # Get prompt templates for project id
         templates = get_project_templates_projects_project_id_templates_get.sync(
-            # TODO: remove type ignore, when migrated to proper AuthenticatedClient
-            project_id=project.id,
-            client=self.client,  # type: ignore[arg-type]
+            project_id=project.id, client=self.client
         )
 
+        # If error or empty, return empty list immediately
         if not templates or isinstance(templates, HTTPValidationError):
             return []
 
-        return [PromptTemplate(prompt_template=prompt_template) for prompt_template in templates]
+        # Return constructed list directly with list comprehension
+        return [PromptTemplate(prompt_template=pt) for pt in templates]
 
     def get(self, *, project_name: str, template_id: str) -> Optional[PromptTemplate]:
         project = Projects().get(name=project_name)
@@ -126,4 +128,5 @@ def get_prompt_template(project: str, name: str) -> Optional[PromptTemplate]:
 
 
 def list_prompt_templates(project: str) -> list[PromptTemplate]:
+    # Directly delegate to class method
     return PromptTemplates().list(project_name=project)
