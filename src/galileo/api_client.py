@@ -124,8 +124,8 @@ class GalileoApiClient(AuthenticatedClient):
         api_url = base_url or getenv("GALILEO_CONSOLE_URL", DEFAULT_API_URL)
         if api_url is None:
             raise ValueError("base_url or GALILEO_CONSOLE_URL must be set")
-        if any(map(api_url.__contains__, ["localhost", "127.0.0.1"])):
-            api_url = "http://localhost:8088"
-        else:
-            api_url = api_url.replace("app.galileo.ai", "api.galileo.ai").replace("console", "api")
-        return api_url
+        # Faster substring check than any(map(...))
+        if "localhost" in api_url or "127.0.0.1" in api_url:
+            return "http://localhost:8088"
+        # Only replace if necessary, assign once
+        return api_url.replace("app.galileo.ai", "api.galileo.ai").replace("console", "api")
