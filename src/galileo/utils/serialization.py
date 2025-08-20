@@ -27,20 +27,33 @@ def serialize_datetime(v: dt.datetime) -> str:
     UTC datetimes end in "Z" while all other timezones are represented as offset from UTC, e.g. +05:00.
     """
 
-    def _serialize_zoned_datetime(v: dt.datetime) -> str:
-        if v.tzinfo is not None and v.tzinfo.tzname(None) == dt.timezone.utc.tzname(None):
-            # UTC is a special case where we use "Z" at the end instead of "+00:00"
-            return v.isoformat().replace("+00:00", "Z")
+    # Fast-path: If datetime has tzinfo
+    tz = v.tzinfo
+    if tz is not None:
+        # Check if it's UTC by object or by name for best compatibility
+        # dt.timezone.utc is a singleton, so this check is fastest
+        if tz is dt.timezone.utc or tz.tzname(None) == "UTC":
+            # UTC: use Z instead of +00:00
+            s = v.isoformat()
+            # Only replace the last "+00:00" if present at the end
+            if s.endswith("+00:00"):
+                return s[:-6] + "Z"
+            return s
         else:
-            # Delegate to the typical +/- offset format
+            # Not UTC: use regular isoformat with offset
             return v.isoformat()
-
-    if v.tzinfo is not None:
-        return _serialize_zoned_datetime(v)
     else:
+        # Attach the local timezone once, only run this if needed
         local_tz = dt.datetime.now().astimezone().tzinfo
         localized_dt = v.replace(tzinfo=local_tz)
-        return _serialize_zoned_datetime(localized_dt)
+        # Now do the UTC check as above
+        if local_tz is dt.timezone.utc or local_tz.tzname(None) == "UTC":
+            s = localized_dt.isoformat()
+            if s.endswith("+00:00"):
+                return s[:-6] + "Z"
+            return s
+        else:
+            return localized_dt.isoformat()
 
 
 class EventSerializer(JSONEncoder):
