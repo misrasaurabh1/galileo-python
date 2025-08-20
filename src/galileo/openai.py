@@ -110,21 +110,17 @@ OPENAI_CLIENT_METHODS = [
 
 class OpenAiArgsExtractor:
     def __init__(self, name: Optional[str] = None, metadata: Optional[dict] = None, **kwargs: Any) -> None:
-        self.args = {
-            "name": name,
-            "metadata": (
-                metadata
-                if "response_format" not in kwargs
-                else {
-                    **(metadata or {}),
-                    "response_format": (
-                        kwargs["response_format"].model_json_schema()
-                        if isclass(kwargs["response_format"]) and issubclass(kwargs["response_format"], BaseModel)
-                        else kwargs["response_format"]
-                    ),
-                }
-            ),
-        }
+        # Avoid repeated dict and if/else construction, compute directly
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            if isclass(response_format) and issubclass(response_format, BaseModel):
+                rf_value = response_format.model_json_schema()
+            else:
+                rf_value = response_format
+            metadata = {**metadata} if metadata is not None else {}
+            metadata["response_format"] = rf_value
+
+        self.args = {"name": name, "metadata": metadata}
         self.kwargs = kwargs
 
     def get_galileo_args(self) -> dict[str, Any]:
@@ -134,12 +130,12 @@ class OpenAiArgsExtractor:
         # If OpenAI model distillation is enabled, we need to add the metadata to the kwargs
         # https://platform.openai.com/docs/guides/distillation
         if self.kwargs.get("store", False):
-            self.kwargs["metadata"] = self.args.get("metadata", {})
-
+            # Avoid .get with default on self.args; we know the shape from init
+            # Assign metadata directly in kwargs
+            self.kwargs["metadata"] = self.args["metadata"] or {}
             # OpenAI does not support non-string type values in metadata when using
             # model distillation feature
             self.kwargs["metadata"].pop("response_format", None)
-
         return self.kwargs
 
 
